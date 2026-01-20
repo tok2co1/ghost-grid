@@ -12,6 +12,8 @@
             background: transparent;
             color: #e6edf3;
             font-family: 'Inter', sans-serif;
+            touch-action: none;
+            /* Prevent scrolling while interacting */
         }
 
         #canvas-wrapper {
@@ -32,9 +34,10 @@
             background-color: #0d1117;
             box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(88, 166, 255, 0.1);
             border-radius: 4px;
-            /* Force initial size for visibility */
             width: 600px;
             height: 600px;
+            max-width: 95vw;
+            /* Responsive for mobile */
         }
 
         #canvas {
@@ -60,6 +63,7 @@
             transform: translate(-50%, -50%);
             cursor: move;
             transition: box-shadow 0.2s ease;
+            touch-action: none;
         }
 
         .hud {
@@ -69,7 +73,8 @@
             transform: translateX(-50%);
             padding: 2px 8px;
             border-radius: 20px;
-            font-size: 9px;
+            font-size: 8px;
+            /* Slightly smaller for mobile */
             font-family: 'Orbitron', sans-serif;
             text-transform: uppercase;
             white-space: nowrap;
@@ -94,13 +99,22 @@
             box-shadow: 0 0 15px #58a6ff;
         }
 
+        /* Larger touch targets for mobile handles */
+        @media (pointer: coarse) {
+            .handle {
+                width: 24px !important;
+                height: 24px !important;
+                opacity: 0.8;
+            }
+        }
+
         .info-tag {
             position: absolute;
             bottom: 8px;
             right: 8px;
             color: #58a6ff;
             font-family: 'Orbitron', sans-serif;
-            font-size: 9px;
+            font-size: 8px;
             pointer-events: none;
             background: rgba(13, 17, 23, 0.8);
             padding: 3px 8px;
@@ -144,7 +158,6 @@
         const gridOverlay = document.getElementById('grid');
         const elementPool = new Map();
 
-        // Initial height sync
         sendMessage("streamlit:setFrameHeight", { height: 650 });
 
         function onStreamlitMessage(event) {
@@ -154,12 +167,8 @@
                 if (!isInteracting && (now - lastSyncTime > 800)) {
                     state = data.args.state || [];
                     images = data.args.images || [];
-
-                    const newW = data.args.paperWidth || 28;
-                    const newH = data.args.paperHeight || 28;
-
-                    pW_cm = newW;
-                    pH_cm = newH;
+                    pW_cm = data.args.paperWidth || 28;
+                    pH_cm = data.args.paperHeight || 28;
                     updateCanvasSize();
                     render();
                 }
@@ -167,7 +176,7 @@
         }
 
         function updateCanvasSize() {
-            const maxPx = 600;
+            const maxPx = Math.min(600, window.innerWidth * 0.9);
             if (pW_cm >= pH_cm) {
                 canvasBox.style.width = maxPx + "px";
                 canvasBox.style.height = (maxPx * (pH_cm / pW_cm)) + "px";
@@ -177,18 +186,13 @@
                 canvasBox.style.width = (maxPx * (pW_cm / pH_cm)) + "px";
                 canvasScale = maxPx / pH_cm;
             }
-
             gridOverlay.style.backgroundSize = `${100 / pW_cm}% ${100 / pH_cm}%`;
             document.getElementById('paper-info').innerText = `NODE_${pW_cm}x${pH_cm}_CM`;
-
-            const h = canvasBox.offsetHeight + 60;
-            sendMessage("streamlit:setFrameHeight", { height: h });
+            sendMessage("streamlit:setFrameHeight", { height: canvasBox.offsetHeight + 80 });
         }
 
         window.addEventListener("message", onStreamlitMessage);
         sendMessage("streamlit:componentReady", { apiVersion: 1 });
-
-        // Force initial frame height and size
         updateCanvasSize();
 
         function sync() {
@@ -220,9 +224,10 @@
                     div.className = 'img-box';
                     div.innerHTML = `
                         <div class="hud"></div>
-                        <img style="width:100%; height:100%; pointer-events:none; user-select:none;">
+                        <img style="width:100%; height:100%; pointer-events:none; user-select:none; object-fit: contain;">
                     `;
-                    div.onmousedown = (e) => handleMouseDown(e, item.id);
+                    div.onmousedown = (e) => handleInteractionStart(e, item.id);
+                    div.ontouchstart = (e) => handleInteractionStart(e, item.id);
                     container.appendChild(div);
                     elementPool.set(item.id, div);
                 }
@@ -237,29 +242,28 @@
                 const img = div.querySelector('img');
                 img.src = images[item.id];
                 img.style.border = (activeId === item.id) ? '2px solid #58a6ff' : '1px solid rgba(88, 166, 255, 0.3)';
-                if (activeId === item.id) img.style.boxShadow = '0 0 15px rgba(88, 166, 255, 0.4)';
-                else img.style.boxShadow = 'none';
 
                 const hud = div.querySelector('.hud');
                 const cm_w = (item.w / canvasScale).toFixed(1);
                 const cm_h = (item.h / canvasScale).toFixed(1);
                 hud.innerText = `${cm_w}x${cm_h}_CM`;
-                hud.style.opacity = (activeId === item.id) ? '1' : '0.6';
-                hud.style.display = 'block';
+                hud.style.opacity = (activeId === item.id) ? '1' : '0';
 
                 let handles = div.querySelectorAll('.handle');
                 if (activeId === item.id) {
                     if (handles.length === 0) {
-                        const style_c = 'right: -6px; bottom: -6px; width: 12px; height: 12px; background: #58a6ff; border-radius: 2px;';
-                        const style_w = 'right: -4px; top: 50%; width: 6px; height: 20px; background: rgba(88, 166, 255, 0.6); border-radius: 3px; transform: translateY(-50%);';
-                        const style_h = 'bottom: -4px; left: 50%; width: 20px; height: 6px; background: rgba(88, 166, 255, 0.6); border-radius: 3px; transform: translateX(-50%);';
+                        const style_c = 'right:-6px; bottom:-6px; width:12px; height:12px; background:#58a6ff; border-radius:2px;';
+                        const style_w = 'right:-4px; top:50%; width:6px; height:20px; background:rgba(88, 166, 255, 0.6); border-radius:3px; transform:translateY(-50%);';
+                        const style_h = 'bottom:-4px; left:50%; width:20px; height:6px; background:rgba(88, 166, 255, 0.6); border-radius:3px; transform:translateX(-50%);';
 
                         const c = createHandle('nwse-resize', style_c);
-                        c.onmousedown = (e) => { e.stopPropagation(); startResize(e, 'corner', item); };
                         const s = createHandle('ew-resize', style_w);
-                        s.onmousedown = (e) => { e.stopPropagation(); startResize(e, 'width', item); };
                         const b = createHandle('ns-resize', style_h);
-                        b.onmousedown = (e) => { e.stopPropagation(); startResize(e, 'height', item); };
+
+                        [c, s, b].forEach(h => {
+                            h.onmousedown = (e) => { e.stopPropagation(); startResize(e, h === c ? 'corner' : (h === s ? 'width' : 'height'), item); };
+                            h.ontouchstart = (e) => { e.stopPropagation(); startResize(e, h === c ? 'corner' : (h === s ? 'width' : 'height'), item); };
+                        });
 
                         div.appendChild(c);
                         div.appendChild(s);
@@ -273,55 +277,75 @@
 
         let dragOffsetX = 0, dragOffsetY = 0, resizeType = null, startX, startY, startW, startH;
 
-        function handleMouseDown(e, id) {
-            if (e.button !== 0) return;
-            e.preventDefault();
+        function getPointerPos(e) {
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return { clientX, clientY };
+        }
+
+        function handleInteractionStart(e, id) {
+            if (e.type === 'mousedown' && e.button !== 0) return;
+            const { clientX, clientY } = getPointerPos(e);
+
             const index = state.findIndex(s => s.id === id);
             const item = state.splice(index, 1)[0];
             state.push(item);
             activeId = id;
             isInteracting = true;
             resizeType = null;
+
             const rect = canvasBox.getBoundingClientRect();
-            dragOffsetX = (e.clientX - rect.left) - item.x;
-            dragOffsetY = (e.clientY - rect.top) - item.y;
+            dragOffsetX = clientX - rect.left - item.x;
+            dragOffsetY = clientY - rect.top - item.y;
             render();
         }
 
         function startResize(e, type, item) {
+            const { clientX, clientY } = getPointerPos(e);
             isInteracting = true;
             resizeType = type;
-            startX = e.clientX;
-            startY = e.clientY;
+            startX = clientX;
+            startY = clientY;
             startW = item.w;
             startH = item.h;
         }
 
-        window.onmousemove = (e) => {
+        function handleMove(e) {
             if (!isInteracting || activeId === -1) return;
             const item = state.find(s => s.id === activeId);
             const rect = canvasBox.getBoundingClientRect();
-            if (resizeType === 'corner') {
-                item.w = Math.max(20, startW + (e.clientX - startX));
-                item.h = item.w / item.ratio;
-            } else if (resizeType === 'width') {
-                item.w = Math.max(20, startW + (e.clientX - startX));
-            } else if (resizeType === 'height') {
-                item.h = Math.max(20, startH + (e.clientY - startY));
+            const { clientX, clientY } = getPointerPos(e);
+
+            if (resizeType) {
+                if (resizeType === 'corner') {
+                    item.w = Math.max(20, startW + (clientX - startX));
+                    item.h = item.w / item.ratio;
+                } else if (resizeType === 'width') {
+                    item.w = Math.max(20, startW + (clientX - startX));
+                } else if (resizeType === 'height') {
+                    item.h = Math.max(20, startH + (clientY - startY));
+                }
             } else {
-                item.x = (e.clientX - rect.left) - dragOffsetX;
-                item.y = (e.clientY - rect.top) - dragOffsetY;
+                item.x = clientX - rect.left - dragOffsetX;
+                item.y = clientY - rect.top - dragOffsetY;
             }
             render();
-        };
+        }
 
-        window.onmouseup = () => {
+        function handleEnd() {
             if (isInteracting) {
                 sync();
                 isInteracting = false;
                 resizeType = null;
             }
-        };
+        }
+
+        window.onmousemove = handleMove;
+        window.ontouchmove = handleMove;
+        window.onmouseup = handleEnd;
+        window.ontouchend = handleEnd;
+
+        window.onresize = updateCanvasSize;
     </script>
 </body>
 
