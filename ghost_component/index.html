@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@400;600&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: transparent;
+            color: #e6edf3;
+            font-family: 'Inter', sans-serif;
+        }
+
+        #canvas-wrapper {
+            width: 100vw;
+            height: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px 0;
+        }
+
+        #canvas-container {
+            border: 1px solid rgba(88, 166, 255, 0.5);
+            position: relative;
+            overflow: hidden;
+            cursor: crosshair;
+            user-select: none;
+            background-color: #0d1117;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(88, 166, 255, 0.1);
+            border-radius: 4px;
+            /* Force initial size for visibility */
+            width: 600px;
+            height: 600px;
+        }
+
+        #canvas {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        .grid-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(88, 166, 255, 0.08) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(88, 166, 255, 0.08) 1px, transparent 1px);
+        }
+
+        .img-box {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            cursor: move;
+            transition: box-shadow 0.2s ease;
+        }
+
+        .hud {
+            position: absolute;
+            top: -28px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 9px;
+            font-family: 'Orbitron', sans-serif;
+            text-transform: uppercase;
+            white-space: nowrap;
+            border: 1px solid rgba(88, 166, 255, 0.4);
+            pointer-events: none;
+            z-index: 1000;
+            background: rgba(13, 17, 23, 0.95);
+            backdrop-filter: blur(4px);
+            color: #58a6ff;
+        }
+
+        .handle {
+            position: absolute;
+            z-index: 100;
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            transition: transform 0.15s ease, background 0.15s ease;
+        }
+
+        .handle:hover {
+            transform: scale(1.3) !important;
+            background: #58a6ff !important;
+            box-shadow: 0 0 15px #58a6ff;
+        }
+
+        .info-tag {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            color: #58a6ff;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 9px;
+            pointer-events: none;
+            background: rgba(13, 17, 23, 0.8);
+            padding: 3px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(88, 166, 255, 0.3);
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="canvas-wrapper">
+        <div id="canvas-container">
+            <div class="grid-overlay" id="grid"></div>
+            <div id="canvas"></div>
+            <div class="info-tag" id="paper-info">NODE_600x600_PX</div>
+        </div>
+    </div>
+
+    <script>
+        function sendMessage(type, data) {
+            window.parent.postMessage({
+                isStreamlitMessage: true,
+                type: type,
+                ...data
+            }, "*");
+        }
+
+        let state = [];
+        let images = [];
+        let activeId = -1;
+        let isInteracting = false;
+        let lastSyncTime = 0;
+
+        let pW_cm = 28;
+        let pH_cm = 28;
+        let canvasScale = 1;
+
+        const container = document.getElementById('canvas');
+        const canvasBox = document.getElementById('canvas-container');
+        const gridOverlay = document.getElementById('grid');
+        const elementPool = new Map();
+
+        // Initial height sync
+        sendMessage("streamlit:setFrameHeight", { height: 650 });
+
+        function onStreamlitMessage(event) {
+            const data = event.data;
+            if (data.type === "streamlit:render") {
+                const now = Date.now();
+                if (!isInteracting && (now - lastSyncTime > 800)) {
+                    state = data.args.state || [];
+                    images = data.args.images || [];
+
+                    const newW = data.args.paperWidth || 28;
+                    const newH = data.args.paperHeight || 28;
+
+                    pW_cm = newW;
+                    pH_cm = newH;
+                    updateCanvasSize();
+                    render();
+                }
+            }
+        }
+
+        function updateCanvasSize() {
+            const maxPx = 600;
+            if (pW_cm >= pH_cm) {
+                canvasBox.style.width = maxPx + "px";
+                canvasBox.style.height = (maxPx * (pH_cm / pW_cm)) + "px";
+                canvasScale = maxPx / pW_cm;
+            } else {
+                canvasBox.style.height = maxPx + "px";
+                canvasBox.style.width = (maxPx * (pW_cm / pH_cm)) + "px";
+                canvasScale = maxPx / pH_cm;
+            }
+
+            gridOverlay.style.backgroundSize = `${100 / pW_cm}% ${100 / pH_cm}%`;
+            document.getElementById('paper-info').innerText = `NODE_${pW_cm}x${pH_cm}_CM`;
+
+            const h = canvasBox.offsetHeight + 60;
+            sendMessage("streamlit:setFrameHeight", { height: h });
+        }
+
+        window.addEventListener("message", onStreamlitMessage);
+        sendMessage("streamlit:componentReady", { apiVersion: 1 });
+
+        // Force initial frame height and size
+        updateCanvasSize();
+
+        function sync() {
+            lastSyncTime = Date.now();
+            sendMessage("streamlit:setComponentValue", { value: state });
+        }
+
+        function createHandle(cursor, style) {
+            const h = document.createElement('div');
+            h.className = 'handle';
+            h.style.cssText = style;
+            h.style.cursor = cursor;
+            return h;
+        }
+
+        function render() {
+            const currentIds = new Set(state.map(s => s.id));
+            for (let [id, el] of elementPool) {
+                if (!currentIds.has(id)) {
+                    el.remove();
+                    elementPool.delete(id);
+                }
+            }
+
+            state.forEach((item, i) => {
+                let div = elementPool.get(item.id);
+                if (!div) {
+                    div = document.createElement('div');
+                    div.className = 'img-box';
+                    div.innerHTML = `
+                        <div class="hud"></div>
+                        <img style="width:100%; height:100%; pointer-events:none; user-select:none;">
+                    `;
+                    div.onmousedown = (e) => handleMouseDown(e, item.id);
+                    container.appendChild(div);
+                    elementPool.set(item.id, div);
+                }
+
+                div.style.left = item.x + 'px';
+                div.style.top = item.y + 'px';
+                div.style.width = item.w + 'px';
+                div.style.height = item.h + 'px';
+                div.style.transform = `translate(-50%, -50%) rotate(${item.rot}deg)`;
+                div.style.zIndex = i;
+
+                const img = div.querySelector('img');
+                img.src = images[item.id];
+                img.style.border = (activeId === item.id) ? '2px solid #58a6ff' : '1px solid rgba(88, 166, 255, 0.3)';
+                if (activeId === item.id) img.style.boxShadow = '0 0 15px rgba(88, 166, 255, 0.4)';
+                else img.style.boxShadow = 'none';
+
+                const hud = div.querySelector('.hud');
+                const cm_w = (item.w / canvasScale).toFixed(1);
+                const cm_h = (item.h / canvasScale).toFixed(1);
+                hud.innerText = `${cm_w}x${cm_h}_CM`;
+                hud.style.opacity = (activeId === item.id) ? '1' : '0.6';
+                hud.style.display = 'block';
+
+                let handles = div.querySelectorAll('.handle');
+                if (activeId === item.id) {
+                    if (handles.length === 0) {
+                        const style_c = 'right: -6px; bottom: -6px; width: 12px; height: 12px; background: #58a6ff; border-radius: 2px;';
+                        const style_w = 'right: -4px; top: 50%; width: 6px; height: 20px; background: rgba(88, 166, 255, 0.6); border-radius: 3px; transform: translateY(-50%);';
+                        const style_h = 'bottom: -4px; left: 50%; width: 20px; height: 6px; background: rgba(88, 166, 255, 0.6); border-radius: 3px; transform: translateX(-50%);';
+
+                        const c = createHandle('nwse-resize', style_c);
+                        c.onmousedown = (e) => { e.stopPropagation(); startResize(e, 'corner', item); };
+                        const s = createHandle('ew-resize', style_w);
+                        s.onmousedown = (e) => { e.stopPropagation(); startResize(e, 'width', item); };
+                        const b = createHandle('ns-resize', style_h);
+                        b.onmousedown = (e) => { e.stopPropagation(); startResize(e, 'height', item); };
+
+                        div.appendChild(c);
+                        div.appendChild(s);
+                        div.appendChild(b);
+                    }
+                } else {
+                    handles.forEach(h => h.remove());
+                }
+            });
+        }
+
+        let dragOffsetX = 0, dragOffsetY = 0, resizeType = null, startX, startY, startW, startH;
+
+        function handleMouseDown(e, id) {
+            if (e.button !== 0) return;
+            e.preventDefault();
+            const index = state.findIndex(s => s.id === id);
+            const item = state.splice(index, 1)[0];
+            state.push(item);
+            activeId = id;
+            isInteracting = true;
+            resizeType = null;
+            const rect = canvasBox.getBoundingClientRect();
+            dragOffsetX = (e.clientX - rect.left) - item.x;
+            dragOffsetY = (e.clientY - rect.top) - item.y;
+            render();
+        }
+
+        function startResize(e, type, item) {
+            isInteracting = true;
+            resizeType = type;
+            startX = e.clientX;
+            startY = e.clientY;
+            startW = item.w;
+            startH = item.h;
+        }
+
+        window.onmousemove = (e) => {
+            if (!isInteracting || activeId === -1) return;
+            const item = state.find(s => s.id === activeId);
+            const rect = canvasBox.getBoundingClientRect();
+            if (resizeType === 'corner') {
+                item.w = Math.max(20, startW + (e.clientX - startX));
+                item.h = item.w / item.ratio;
+            } else if (resizeType === 'width') {
+                item.w = Math.max(20, startW + (e.clientX - startX));
+            } else if (resizeType === 'height') {
+                item.h = Math.max(20, startH + (e.clientY - startY));
+            } else {
+                item.x = (e.clientX - rect.left) - dragOffsetX;
+                item.y = (e.clientY - rect.top) - dragOffsetY;
+            }
+            render();
+        };
+
+        window.onmouseup = () => {
+            if (isInteracting) {
+                sync();
+                isInteracting = false;
+                resizeType = null;
+            }
+        };
+    </script>
+</body>
+
+</html>
