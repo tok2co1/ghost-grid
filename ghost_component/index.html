@@ -31,8 +31,8 @@
             overflow: hidden;
             cursor: crosshair;
             user-select: none;
-            background-color: #0d1117;
-            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(88, 166, 255, 0.1);
+            background-color: #ffffff;
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 0, 0, 0.05);
             border-radius: 4px;
             width: 600px;
             height: 600px;
@@ -54,8 +54,8 @@
             bottom: 0;
             pointer-events: none;
             background-image:
-                linear-gradient(rgba(88, 166, 255, 0.08) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(88, 166, 255, 0.08) 1px, transparent 1px);
+                linear-gradient(rgba(0, 0, 0, 0.15) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 0, 0, 0.15) 1px, transparent 1px);
         }
 
         .img-box {
@@ -143,7 +143,7 @@
             }, "*");
         }
 
-        let state = [];
+        let state = []; // Normalized 0-1
         let images = [];
         let activeId = -1;
         let isInteracting = false;
@@ -164,7 +164,7 @@
             const data = event.data;
             if (data.type === "streamlit:render") {
                 const now = Date.now();
-                if (!isInteracting && (now - lastSyncTime > 800)) {
+                if (!isInteracting && (now - lastSyncTime > 100)) {
                     state = data.args.state || [];
                     images = data.args.images || [];
                     pW_cm = data.args.paperWidth || 28;
@@ -189,6 +189,7 @@
             gridOverlay.style.backgroundSize = `${100 / pW_cm}% ${100 / pH_cm}%`;
             document.getElementById('paper-info').innerText = `NODE_${pW_cm}x${pH_cm}_CM`;
             sendMessage("streamlit:setFrameHeight", { height: canvasBox.offsetHeight + 80 });
+            render(); // Re-render in case size changed
         }
 
         window.addEventListener("message", onStreamlitMessage);
@@ -209,6 +210,10 @@
         }
 
         function render() {
+            const cW = canvasBox.offsetWidth;
+            const cH = canvasBox.offsetHeight;
+            if (!cW || !cH) return;
+
             const currentIds = new Set(state.map(s => s.id));
             for (let [id, el] of elementPool) {
                 if (!currentIds.has(id)) {
@@ -232,20 +237,26 @@
                     elementPool.set(item.id, div);
                 }
 
-                div.style.left = item.x + 'px';
-                div.style.top = item.y + 'px';
-                div.style.width = item.w + 'px';
-                div.style.height = item.h + 'px';
+                // Convert normalized to pixels
+                const pxX = item.x * cW;
+                const pxY = item.y * cH;
+                const pxW = item.w * cW;
+                const pxH = item.h * cH;
+
+                div.style.left = pxX + 'px';
+                div.style.top = pxY + 'px';
+                div.style.width = pxW + 'px';
+                div.style.height = pxH + 'px';
                 div.style.transform = `translate(-50%, -50%) rotate(${item.rot}deg)`;
                 div.style.zIndex = i;
 
                 const img = div.querySelector('img');
                 img.src = images[item.id];
-                img.style.border = (activeId === item.id) ? '2px solid #58a6ff' : '1px solid rgba(88, 166, 255, 0.3)';
+                img.style.border = (activeId === item.id) ? '2px solid #58a6ff' : '1px solid rgba(0, 0, 0, 0.15)';
 
                 const hud = div.querySelector('.hud');
-                const cm_w = (item.w / canvasScale).toFixed(1);
-                const cm_h = (item.h / canvasScale).toFixed(1);
+                const cm_w = (pxW / canvasScale).toFixed(1);
+                const cm_h = (pxH / canvasScale).toFixed(1);
                 hud.innerText = `${cm_w}x${cm_h}_CM`;
                 hud.style.opacity = (activeId === item.id) ? '1' : '0';
 
@@ -275,7 +286,8 @@
             });
         }
 
-        let dragOffsetX = 0, dragOffsetY = 0, resizeType = null, startX, startY, startW, startH;
+        let dragOffsetX = 0, dragOffsetY = 0, resizeType = null;
+        let startX, startY, startW_norm, startH_norm;
 
         function getPointerPos(e) {
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -295,8 +307,12 @@
             resizeType = null;
 
             const rect = canvasBox.getBoundingClientRect();
-            dragOffsetX = clientX - rect.left - item.x;
-            dragOffsetY = clientY - rect.top - item.y;
+            const cW = canvasBox.offsetWidth;
+            const cH = canvasBox.offsetHeight;
+
+            // Offset in normalized units
+            dragOffsetX = (clientX - rect.left) / cW - item.x;
+            dragOffsetY = (clientY - rect.top) / cH - item.y;
             render();
         }
 
@@ -306,8 +322,8 @@
             resizeType = type;
             startX = clientX;
             startY = clientY;
-            startW = item.w;
-            startH = item.h;
+            startW_norm = item.w;
+            startH_norm = item.h;
         }
 
         function handleMove(e) {
@@ -315,19 +331,30 @@
             const item = state.find(s => s.id === activeId);
             const rect = canvasBox.getBoundingClientRect();
             const { clientX, clientY } = getPointerPos(e);
+            const cW = canvasBox.offsetWidth;
+            const cH = canvasBox.offsetHeight;
 
             if (resizeType) {
+                const diffX_norm = (clientX - startX) / cW;
+                const diffY_norm = (clientY - startY) / cH;
+
                 if (resizeType === 'corner') {
-                    item.w = Math.max(20, startW + (clientX - startX));
-                    item.h = item.w / item.ratio;
+                    item.w = Math.max(0.05, startW_norm + diffX_norm);
+                    // Maintain aspect ratio in terms of CM
+                    // w_cm = item.w * pW_cm
+                    // h_cm = w_cm / ratio
+                    // item.h = h_cm / pH_cm
+                    const w_cm = item.w * pW_cm;
+                    const h_cm = w_cm / item.ratio;
+                    item.h = h_cm / pH_cm;
                 } else if (resizeType === 'width') {
-                    item.w = Math.max(20, startW + (clientX - startX));
+                    item.w = Math.max(0.05, startW_norm + diffX_norm);
                 } else if (resizeType === 'height') {
-                    item.h = Math.max(20, startH + (clientY - startY));
+                    item.h = Math.max(0.05, startH_norm + diffY_norm);
                 }
             } else {
-                item.x = clientX - rect.left - dragOffsetX;
-                item.y = clientY - rect.top - dragOffsetY;
+                item.x = (clientX - rect.left) / cW - dragOffsetX;
+                item.y = (clientY - rect.top) / cH - dragOffsetY;
             }
             render();
         }

@@ -3,9 +3,14 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 import io
 import math
 import base64
-import json
 import os
 import streamlit.components.v1 as components
+
+try:
+    from rembg import remove
+    REMBG_AVAILABLE = True
+except ImportError:
+    REMBG_AVAILABLE = False
 
 # --- COMPONENT SETUP ---
 parent_dir = os.path.dirname(os.path.abspath(__file__))
@@ -112,6 +117,10 @@ def smart_process(images, image_settings, pW_cm, pH_cm):
         img = Image.open(uploaded_file).convert("RGBA")
         img = ImageOps.exif_transpose(img)
         
+        # 3. BACKGROUND REMOVAL (if enabled)
+        if settings.get("remove_bg", False) and REMBG_AVAILABLE:
+            img = remove(img)
+        
         target_w = int(PAPER_W * settings["w"])
         target_h = int(PAPER_H * settings["h"])
         
@@ -134,6 +143,17 @@ pH_cm = st.sidebar.slider("Height", 5, 200, 28)
 st.title("💠 GHOST GRID // COLLAGE")
 files = st.file_uploader(" ", accept_multiple_files=True, type=['jpg', 'png', 'jpeg'])
 
+bg_removal_settings = {}
+if files:
+    if not REMBG_AVAILABLE:
+        st.warning("⚠️ AI Background Removal is starting up or not available. Please wait or check requirements.")
+    
+    with st.expander("🪄 AI TOOLS - Background Removal", expanded=True):
+        st.info("💡 Arka planını silmek istediğin resimleri aşağıdan işaretle.")
+        cols = st.columns(3)
+        for i, f in enumerate(files):
+            bg_removal_settings[i] = cols[i % 3].checkbox(f"✂️ {f.name[:15]}...", key=f"bg_{i}")
+
 if files:
     img_bufs = []
     b64_images = []
@@ -152,10 +172,10 @@ if files:
         st.session_state.last_file_count = len(files)
         st.session_state.canvas_state = [
             {
-                "x": 100 + (i % 3 * 180), 
-                "y": 100 + (i // 3 * 180), 
-                "w": 150, 
-                "h": 150 / aspect_ratios[i], 
+                "x": 0.2 + (i % 3 * 0.3), 
+                "y": 0.2 + (i // 3 * 0.3), 
+                "w": 0.25, 
+                "h": 0.25 / aspect_ratios[i], 
                 "rot": 0, 
                 "id": i, 
                 "ratio": aspect_ratios[i]
@@ -178,27 +198,20 @@ if files:
     st.markdown("<div class='hud-bar'></div>", unsafe_allow_html=True)
     
     if new_state is not None:
+        # Check if incoming state is already normalized or if it needs conversion
+        # The new JS version will send normalized coordinates.
         st.session_state.canvas_state = new_state
-
-    # Mapping logic: coordinates are relative to the interactive container size
-    # which we now calculate based on the aspect ratio in the JS side (max 600px)
-    max_px = 600
-    if pW_cm >= pH_cm:
-        container_w = max_px
-        container_h = max_px * (pH_cm / pW_cm)
-    else:
-        container_h = max_px
-        container_w = max_px * (pW_cm / pH_cm)
 
     image_settings = {}
     for i, s in enumerate(st.session_state.canvas_state):
         image_settings[s["id"]] = {
-            "x": s["x"] / container_w,
-            "y": s["y"] / container_h,
-            "w": s["w"] / container_w,
-            "h": s["h"] / container_h,
+            "x": s["x"],
+            "y": s["y"],
+            "w": s["w"],
+            "h": s.get("h", s["w"] / s["ratio"]),
             "rotation": s.get("rot", 0),
-            "layer": i 
+            "layer": i,
+            "remove_bg": bg_removal_settings.get(s["id"], False)
         }
 
     with st.spinner("Synthesizing collage..."):
@@ -207,9 +220,9 @@ if files:
         
         export_format = st.sidebar.selectbox(
             "Select Output Format",
-            options=["JPEG", "TIFF", "PDF", "PNG", "WebP"],
+            options=["PNG", "JPEG", "TIFF", "PDF", "WebP"],
             index=0,
-            help="JPEG/PNG: Standart. TIFF: Kayıpsız Baskı. PDF: Matbaa belgesi. WebP: Yeni nesil yüksek sıkıştırma."
+            help="PNG/TIFF: Kayıpsız Baskı. JPEG: Standart. PDF: Matbaa belgesi. WebP: Yeni nesil yüksek sıkıştırma."
         )
         
         final_img = smart_process(files, image_settings, pW_cm, pH_cm)
@@ -230,6 +243,7 @@ if files:
             mime_type = "application/pdf"
             file_ext = "pdf"
         elif export_format == "PNG":
+            # True PNG conversion: PIL handles the encoding/file structure correctly.
             final_img.save(buf, format="PNG", dpi=(300, 300))
             mime_type = "image/png"
             file_ext = "png"
@@ -251,4 +265,6 @@ if files:
         )
         
 
+        st.markdown("<div style='border: 1px solid rgba(88, 166, 255, 0.3); padding: 5px; border-radius: 8px; background: rgba(255,255,255,0.02);'>", unsafe_allow_html=True)
         st.image(byte_im, caption=f"High-Res Result Preview ({export_format})", use_container_width=True)
+        st.markdown("</div>", unsafe_allow_html=True)
