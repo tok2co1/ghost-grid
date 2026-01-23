@@ -1,41 +1,21 @@
 import streamlit as st
-import os
-import io
-import base64
-import math
 
 # --- PAGE CONFIG MUST BE FIRST ---
 st.set_page_config(page_title="GHOST GRID", page_icon="💠", layout="wide")
 
-st.write("DEBUG: Core modules loaded. Checking heavy dependencies...")
-
-# Lazy loading flags
-if 'REMBG_AVAILABLE' not in st.session_state:
-    try:
-        from rembg import remove
-        st.session_state.REMBG_AVAILABLE = True
-        st.session_state.debug_msg = "rembg loaded successfully"
-    except Exception as e:
-        st.session_state.REMBG_AVAILABLE = False
-        st.session_state.debug_msg = f"rembg failure: {str(e)}"
-
-if 'PILLOW_AVAILABLE' not in st.session_state:
-    try:
-        from PIL import Image, ImageOps
-        st.session_state.PILLOW_AVAILABLE = True
-    except Exception as e:
-        st.session_state.PILLOW_AVAILABLE = False
-        st.error(f"Critical Error: Pillow failed to load: {e}")
+import os
+import io
+import base64
+import math
+from PIL import Image, ImageOps
+from streamlit.components.v1 import declare_component
 
 # --- COMPONENT SETUP ---
-from streamlit.components.v1 import declare_component
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 build_dir = os.path.join(parent_dir, "ghost_component")
-try:
-    _ghost_canvas = declare_component("ghost_canvas", path=build_dir)
-except Exception as e:
-    st.error(f"Component Error: {e}")
+_ghost_canvas = declare_component("ghost_canvas", path=build_dir)
 
+# --- SAYFA YAPILANDİRMASI (Antigravity Theme) ---
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;400;600&display=swap');
@@ -117,18 +97,13 @@ st.markdown("""
 
 # --- CORE LOGIC ---
 def smart_process(images, image_settings, pW_cm, pH_cm):
-    if not st.session_state.get('PILLOW_AVAILABLE', False):
-        return None
-    
-    from PIL import Image, ImageOps
-    # 1. DYNAMIC PAPER SETTINGS (300 DPI)
     DPI = 300
     PAPER_W = int((pW_cm / 2.54) * DPI)
     PAPER_H = int((pH_cm / 2.54) * DPI)
     
     paper = Image.new('RGB', (PAPER_W, PAPER_H), 'white')
     
-    # 2. YERLEŞTİRME (FREEFORM)
+    # Yerleştirme
     sorted_indices = sorted(range(len(images)), key=lambda i: image_settings.get(i, {}).get("layer", 0))
     for i in sorted_indices:
         uploaded_file = images[i]
@@ -136,14 +111,6 @@ def smart_process(images, image_settings, pW_cm, pH_cm):
         
         img = Image.open(uploaded_file).convert("RGBA")
         img = ImageOps.exif_transpose(img)
-        
-        # 3. BACKGROUND REMOVAL (if enabled)
-        if settings.get("remove_bg", False) and st.session_state.get('REMBG_AVAILABLE', False):
-            try:
-                from rembg import remove
-                img = remove(img)
-            except Exception as e:
-                st.warning(f"Background removal failed for one image: {e}")
         
         target_w = int(PAPER_W * settings["w"])
         target_h = int(PAPER_H * settings["h"])
@@ -158,33 +125,17 @@ def smart_process(images, image_settings, pW_cm, pH_cm):
     return paper.convert("RGB")
 
 # --- EXECUTION ---
-# login_system() removed for immediate access
-
 st.sidebar.subheader("📏 PAPER SIZE (cm)")
 pW_cm = st.sidebar.slider("Width", 5, 200, 28)
 pH_cm = st.sidebar.slider("Height", 5, 200, 28)
 
 st.title("💠 GHOST GRID // COLLAGE")
-st.write(f"STATUS: {st.session_state.get('debug_msg', 'Checking...')}")
-
 files = st.file_uploader(" ", accept_multiple_files=True, type=['jpg', 'png', 'jpeg'])
-
-bg_removal_settings = {}
-if files:
-    if not st.session_state.get('REMBG_AVAILABLE', False):
-        st.warning(f"⚠️ AI Background Removal not available: {st.session_state.get('debug_msg', 'Unknown issue')}")
-    
-    with st.expander("🪄 AI TOOLS - Background Removal", expanded=True):
-        st.info("💡 Arka planını silmek istediğin resimleri aşağıdan işaretle.")
-        cols = st.columns(3)
-        for i, f in enumerate(files):
-            bg_removal_settings[i] = cols[i % 3].checkbox(f"✂️ {f.name[:15]}...", key=f"bg_{i}")
 
 if files:
     img_bufs = []
     b64_images = []
     aspect_ratios = []
-    from PIL import Image
     for f in files:
         buf = io.BytesIO(f.read())
         img_bufs.append(buf)
@@ -214,7 +165,6 @@ if files:
     st.markdown(f"### 🎨 {pW_cm}x{pH_cm}cm PRECISION WORKSPACE")
     st.info("💡 Her kare **1cm**'yi temsil eder. Resimleri **üste getirmek** için üzerlerine tıkla.")
     
-    # Render Custom Component with Dynamic Paper Size
     new_state = _ghost_canvas(
         state=st.session_state.canvas_state, 
         images=b64_images, 
@@ -225,8 +175,6 @@ if files:
     st.markdown("<div class='hud-bar'></div>", unsafe_allow_html=True)
     
     if new_state is not None:
-        # Check if incoming state is already normalized or if it needs conversion
-        # The new JS version will send normalized coordinates.
         st.session_state.canvas_state = new_state
 
     image_settings = {}
@@ -237,8 +185,7 @@ if files:
             "w": s["w"],
             "h": s.get("h", s["w"] / s["ratio"]),
             "rotation": s.get("rot", 0),
-            "layer": i,
-            "remove_bg": bg_removal_settings.get(s["id"], False)
+            "layer": i
         }
 
     with st.spinner("Synthesizing collage..."):
@@ -248,19 +195,19 @@ if files:
         export_format = st.sidebar.selectbox(
             "Select Output Format",
             options=["PNG", "JPEG", "TIFF", "PDF", "WebP"],
-            index=0,
-            help="PNG/TIFF: Kayıpsız Baskı. JPEG: Standart. PDF: Matbaa belgesi. WebP: Yeni nesil yüksek sıkıştırma."
+            index=0
         )
         
         final_img = smart_process(files, image_settings, pW_cm, pH_cm)
         
-        # Save based on format
         buf = io.BytesIO()
-        mime_type = "image/jpeg"
-        file_ext = "jpg"
+        mime_type = "image/png"
+        file_ext = "png"
         
         if export_format == "JPEG":
             final_img.save(buf, format="JPEG", quality=95, dpi=(300, 300))
+            mime_type = "image/jpeg"
+            file_ext = "jpg"
         elif export_format == "TIFF":
             final_img.save(buf, format="TIFF", compression="tiff_adobe", dpi=(300, 300))
             mime_type = "image/tiff"
@@ -270,7 +217,6 @@ if files:
             mime_type = "application/pdf"
             file_ext = "pdf"
         elif export_format == "PNG":
-            # True PNG conversion: PIL handles the encoding/file structure correctly.
             final_img.save(buf, format="PNG", dpi=(300, 300))
             mime_type = "image/png"
             file_ext = "png"
@@ -287,11 +233,9 @@ if files:
             label=f"⬇️ DOWNLOAD {pW_cm}x{pH_cm}cm {export_format}",
             data=byte_im,
             file_name=f"ghost_grid_{pW_cm}x{pH_cm}.{file_ext}",
-            mime=mime_type,
-            help=f"Baskı için yüksek çözünürlüklü {export_format} dosyasını indir."
+            mime=mime_type
         )
         
-
         st.markdown("<div style='border: 1px solid rgba(88, 166, 255, 0.3); padding: 5px; border-radius: 8px; background: rgba(255,255,255,0.02);'>", unsafe_allow_html=True)
         st.image(byte_im, caption=f"High-Res Result Preview ({export_format})", use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)
