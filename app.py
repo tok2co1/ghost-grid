@@ -1,4 +1,6 @@
 import streamlit as st
+st.write("DEBUG: App starting...")
+
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 import io
 import math
@@ -9,8 +11,10 @@ import streamlit.components.v1 as components
 try:
     from rembg import remove
     REMBG_AVAILABLE = True
-except ImportError:
+    st.write("DEBUG: rembg loaded")
+except Exception as e:
     REMBG_AVAILABLE = False
+    st.write(f"DEBUG: rembg failed: {e}")
 
 # --- COMPONENT SETUP ---
 parent_dir = os.path.dirname(os.path.abspath(__file__))
