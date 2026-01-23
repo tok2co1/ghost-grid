@@ -1,21 +1,19 @@
 import streamlit as st
-
-# --- PAGE CONFIG MUST BE FIRST ---
-st.set_page_config(page_title="GHOST GRID", page_icon="💠", layout="wide")
-
-import os
-import io
-import base64
-import math
 from PIL import Image, ImageOps
-from streamlit.components.v1 import declare_component
+import io
+import math
+import base64
+import os
+import streamlit.components.v1 as components
 
 # --- COMPONENT SETUP ---
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 build_dir = os.path.join(parent_dir, "ghost_component")
-_ghost_canvas = declare_component("ghost_canvas", path=build_dir)
+_ghost_canvas = components.declare_component("ghost_canvas", path=build_dir)
 
 # --- SAYFA YAPILANDİRMASI (Antigravity Theme) ---
+st.set_page_config(page_title="GHOST GRID", page_icon="💠", layout="wide")
+
 st.markdown("""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Inter:wght@300;400;600&display=swap');
@@ -97,13 +95,14 @@ st.markdown("""
 
 # --- CORE LOGIC ---
 def smart_process(images, image_settings, pW_cm, pH_cm):
+    # 1. DYNAMIC PAPER SETTINGS (300 DPI)
     DPI = 300
     PAPER_W = int((pW_cm / 2.54) * DPI)
     PAPER_H = int((pH_cm / 2.54) * DPI)
     
     paper = Image.new('RGB', (PAPER_W, PAPER_H), 'white')
     
-    # Yerleştirme
+    # 2. YERLEŞTİRME (FREEFORM)
     sorted_indices = sorted(range(len(images)), key=lambda i: image_settings.get(i, {}).get("layer", 0))
     for i in sorted_indices:
         uploaded_file = images[i]
@@ -165,6 +164,7 @@ if files:
     st.markdown(f"### 🎨 {pW_cm}x{pH_cm}cm PRECISION WORKSPACE")
     st.info("💡 Her kare **1cm**'yi temsil eder. Resimleri **üste getirmek** için üzerlerine tıkla.")
     
+    # Render Custom Component with Dynamic Paper Size
     new_state = _ghost_canvas(
         state=st.session_state.canvas_state, 
         images=b64_images, 
@@ -185,7 +185,7 @@ if files:
             "w": s["w"],
             "h": s.get("h", s["w"] / s["ratio"]),
             "rotation": s.get("rot", 0),
-            "layer": i
+            "layer": i 
         }
 
     with st.spinner("Synthesizing collage..."):
@@ -195,11 +195,13 @@ if files:
         export_format = st.sidebar.selectbox(
             "Select Output Format",
             options=["PNG", "JPEG", "TIFF", "PDF", "WebP"],
-            index=0
+            index=0,
+            help="PNG/TIFF: Kayıpsız Baskı. JPEG: Standart. PDF: Matbaa belgesi. WebP: Yeni nesil yüksek sıkıştırma."
         )
         
         final_img = smart_process(files, image_settings, pW_cm, pH_cm)
         
+        # Save based on format
         buf = io.BytesIO()
         mime_type = "image/png"
         file_ext = "png"
@@ -233,9 +235,11 @@ if files:
             label=f"⬇️ DOWNLOAD {pW_cm}x{pH_cm}cm {export_format}",
             data=byte_im,
             file_name=f"ghost_grid_{pW_cm}x{pH_cm}.{file_ext}",
-            mime=mime_type
+            mime=mime_type,
+            help=f"Baskı için yüksek çözünürlüklü {export_format} dosyasını indir."
         )
         
+
         st.markdown("<div style='border: 1px solid rgba(88, 166, 255, 0.3); padding: 5px; border-radius: 8px; background: rgba(255,255,255,0.02);'>", unsafe_allow_html=True)
         st.image(byte_im, caption=f"High-Res Result Preview ({export_format})", use_container_width=True)
         st.markdown("</div>", unsafe_allow_html=True)

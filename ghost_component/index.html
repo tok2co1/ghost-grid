@@ -341,9 +341,6 @@
                 if (resizeType === 'corner') {
                     item.w = Math.max(0.05, startW_norm + diffX_norm);
                     // Maintain aspect ratio in terms of CM
-                    // w_cm = item.w * pW_cm
-                    // h_cm = w_cm / ratio
-                    // item.h = h_cm / pH_cm
                     const w_cm = item.w * pW_cm;
                     const h_cm = w_cm / item.ratio;
                     item.h = h_cm / pH_cm;
