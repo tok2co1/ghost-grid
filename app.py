@@ -1,28 +1,40 @@
 import streamlit as st
-st.write("DEBUG: App starting...")
-
-from PIL import Image, ImageDraw, ImageFont, ImageOps
-import io
-import math
-import base64
 import os
-import streamlit.components.v1 as components
+import io
+import base64
+import math
 
-try:
-    from rembg import remove
-    REMBG_AVAILABLE = True
-    st.write("DEBUG: rembg loaded")
-except Exception as e:
-    REMBG_AVAILABLE = False
-    st.write(f"DEBUG: rembg failed: {e}")
+# --- PAGE CONFIG MUST BE FIRST ---
+st.set_page_config(page_title="GHOST GRID", page_icon="💠", layout="wide")
+
+st.write("DEBUG: Core modules loaded. Checking heavy dependencies...")
+
+# Lazy loading flags
+if 'REMBG_AVAILABLE' not in st.session_state:
+    try:
+        from rembg import remove
+        st.session_state.REMBG_AVAILABLE = True
+        st.session_state.debug_msg = "rembg loaded successfully"
+    except Exception as e:
+        st.session_state.REMBG_AVAILABLE = False
+        st.session_state.debug_msg = f"rembg failure: {str(e)}"
+
+if 'PILLOW_AVAILABLE' not in st.session_state:
+    try:
+        from PIL import Image, ImageOps
+        st.session_state.PILLOW_AVAILABLE = True
+    except Exception as e:
+        st.session_state.PILLOW_AVAILABLE = False
+        st.error(f"Critical Error: Pillow failed to load: {e}")
 
 # --- COMPONENT SETUP ---
+from streamlit.components.v1 import declare_component
 parent_dir = os.path.dirname(os.path.abspath(__file__))
 build_dir = os.path.join(parent_dir, "ghost_component")
-_ghost_canvas = components.declare_component("ghost_canvas", path=build_dir)
-
-# --- SAYFA YAPILANDIRMASI (Antigravity Theme) ---
-st.set_page_config(page_title="GHOST GRID", page_icon="💠", layout="wide")
+try:
+    _ghost_canvas = declare_component("ghost_canvas", path=build_dir)
+except Exception as e:
+    st.error(f"Component Error: {e}")
 
 st.markdown("""
     <style>
@@ -105,6 +117,10 @@ st.markdown("""
 
 # --- CORE LOGIC ---
 def smart_process(images, image_settings, pW_cm, pH_cm):
+    if not st.session_state.get('PILLOW_AVAILABLE', False):
+        return None
+    
+    from PIL import Image, ImageOps
     # 1. DYNAMIC PAPER SETTINGS (300 DPI)
     DPI = 300
     PAPER_W = int((pW_cm / 2.54) * DPI)
@@ -122,8 +138,12 @@ def smart_process(images, image_settings, pW_cm, pH_cm):
         img = ImageOps.exif_transpose(img)
         
         # 3. BACKGROUND REMOVAL (if enabled)
-        if settings.get("remove_bg", False) and REMBG_AVAILABLE:
-            img = remove(img)
+        if settings.get("remove_bg", False) and st.session_state.get('REMBG_AVAILABLE', False):
+            try:
+                from rembg import remove
+                img = remove(img)
+            except Exception as e:
+                st.warning(f"Background removal failed for one image: {e}")
         
         target_w = int(PAPER_W * settings["w"])
         target_h = int(PAPER_H * settings["h"])
@@ -145,12 +165,14 @@ pW_cm = st.sidebar.slider("Width", 5, 200, 28)
 pH_cm = st.sidebar.slider("Height", 5, 200, 28)
 
 st.title("💠 GHOST GRID // COLLAGE")
+st.write(f"STATUS: {st.session_state.get('debug_msg', 'Checking...')}")
+
 files = st.file_uploader(" ", accept_multiple_files=True, type=['jpg', 'png', 'jpeg'])
 
 bg_removal_settings = {}
 if files:
-    if not REMBG_AVAILABLE:
-        st.warning("⚠️ AI Background Removal is starting up or not available. Please wait or check requirements.")
+    if not st.session_state.get('REMBG_AVAILABLE', False):
+        st.warning(f"⚠️ AI Background Removal not available: {st.session_state.get('debug_msg', 'Unknown issue')}")
     
     with st.expander("🪄 AI TOOLS - Background Removal", expanded=True):
         st.info("💡 Arka planını silmek istediğin resimleri aşağıdan işaretle.")
@@ -162,6 +184,7 @@ if files:
     img_bufs = []
     b64_images = []
     aspect_ratios = []
+    from PIL import Image
     for f in files:
         buf = io.BytesIO(f.read())
         img_bufs.append(buf)
