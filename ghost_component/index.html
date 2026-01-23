@@ -164,7 +164,8 @@
             const data = event.data;
             if (data.type === "streamlit:render") {
                 const now = Date.now();
-                if (!isInteracting && (now - lastSyncTime > 100)) {
+                // Increased delay to 2000ms to prevent rubber-banding (jumping back to old state)
+                if (!isInteracting && (now - lastSyncTime > 2000)) {
                     state = data.args.state || [];
                     images = data.args.images || [];
                     pW_cm = data.args.paperWidth || 28;
@@ -297,6 +298,10 @@
 
         function handleInteractionStart(e, id) {
             if (e.type === 'mousedown' && e.button !== 0) return;
+            if (e.type === 'touchstart') {
+                // Prevent browser standard behaviors like scrolling during drag
+                e.stopPropagation();
+            }
             const { clientX, clientY } = getPointerPos(e);
 
             const index = state.findIndex(s => s.id === id);
@@ -353,7 +358,7 @@
                 item.x = (clientX - rect.left) / cW - dragOffsetX;
                 item.y = (clientY - rect.top) / cH - dragOffsetY;
             }
-            render();
+            window.requestAnimationFrame(render);
         }
 
         function handleEnd() {
